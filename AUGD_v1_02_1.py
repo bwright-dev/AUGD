@@ -87,7 +87,7 @@ class MainWindow(QMainWindow):
         self.webview.setFixedSize(1200, 800)
 
         # Custom page to capture console messages
-        self.page = WebEnginePage(self.webview)
+        self.page = WebEnginePage()
         self.webview.setPage(self.page)
 
         # Load target URL
@@ -127,333 +127,214 @@ class MainWindow(QMainWindow):
         logging.info("Injecting JavaScript...")
         self.status_label.setText(f"Status: Injecting JavaScript... [{get_timestamp()}]")
 
-        # Full JavaScript injection without hard waits
         script = """
-      const delay = (durationMs) => {
-  return new Promise(resolve => setTimeout(resolve, durationMs));
-}
-(async function() {
-    let stop = false;
+        console.log("JavaScript injection started");
 
-    // Helper function to introduce a delay (wait)
-    const delay = (durationMs) => {
-        return new Promise(resolve => setTimeout(resolve, durationMs));
-    }
-
-    // Unified waitForElement function to handle both appearing and disappearing elements
-    async function waitForElement(selector, timeout = 20000, shouldAppear = true) {
-        return new Promise((resolve, reject) => {
-            const startTime = Date.now();
-            const interval = setInterval(() => {
-                const element = document.querySelector(selector);
-                const timeElapsed = Date.now() - startTime;
-
-                if (shouldAppear && element) {
-                    clearInterval(interval);
-                    console.log(`Element appeared: ${selector}`);
-                    resolve(element);
-                } else if (!shouldAppear && !element) {
-                    clearInterval(interval);
-                    console.log(`Element disappeared: ${selector}`);
-                    resolve(true);
-                } else if (timeElapsed > timeout) {
-                    clearInterval(interval);
-                    reject(new Error(`Timeout waiting for selector: ${selector}`));
-                }
-            }, 100);
-        });
-    }
-
-    async function closeModalIfNoCheckboxes() {
-        try {
-            console.log("Checking if modal has no checkboxes...");
-
-            // Wait for the modal to appear
-            await waitForElement('#availableUsersForm', 5000);
-
-            // Check if there are no checkboxes
-            let checkboxes = document.querySelectorAll('input[type="checkbox"][name="userUuid[]"]');
-            if (checkboxes.length === 0) {
-                console.log("No available users to add, closing the modal by clicking on the screen.");
-
-                // Simulate a click in the middle of the screen to close the modal
-                let middleOfScreen = new MouseEvent('click', {
-                    view: window,
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: window.innerWidth / 2,
-                    clientY: window.innerHeight / 2
-                });
-                document.dispatchEvent(middleOfScreen);
-
-                // Wait for the modal to disappear
-                await waitForElement('.modal.show', 5000, false);
-                console.log("Modal successfully closed by clicking the screen.");
-                
-                // Ensure there is a delay before continuing
-                await delay(300);
-            } else {
-                console.log("Found checkboxes, proceeding with user addition.");
-            }
-        } catch (error) {
-            console.error("Error closing modal:", error);
+        async function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
         }
-    }
 
-    async function navigateToUserGroups() {
-        try {
-            console.log("Attempting to find and click the dropdown...");
-
-            let dropdown = await waitForElement('a.dropdown-toggle.media-heading');
-            dropdown.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            await delay(300); // Delay before clicking the dropdown
-            
-            let event = new MouseEvent('click', {
-                view: window,
-                bubbles: true,
-                cancelable: true
+        async function waitForElementAppear(selector, timeout = 20000) {
+            return new Promise((resolve, reject) => {
+                const startTime = Date.now();
+                const checkExist = setInterval(() => {
+                    const element = document.querySelector(selector);
+                    if (element) {
+                        clearInterval(checkExist);
+                        resolve(element);
+                    } else if (Date.now() - startTime >= timeout) {
+                        clearInterval(checkExist);
+                        console.error(`Element ${selector} did not appear within ${timeout} ms`);
+                        reject(new Error(`Element ${selector} did not appear within ${timeout} ms`));
+                    }
+                }, 100); // Check every 100 ms
             });
-            dropdown.dispatchEvent(event);
-            console.log("Successfully clicked the dropdown menu.");
+        }
 
-            let userGroupsLink = await waitForElement('li.sub:nth-child(5) > a:nth-child(1)');
-            await delay(500); // Delay before navigating to user groups page
-            
+        async function waitForElementRemoved(selector, timeout = 10000) {
+            return new Promise((resolve, reject) => {
+                const startTime = Date.now();
+                const checkExist = setInterval(() => {
+                    const element = document.querySelector(selector);
+                    if (!element) {
+                        clearInterval(checkExist);
+                        resolve();
+                    } else if (Date.now() - startTime >= timeout) {
+                        clearInterval(checkExist);
+                        reject(new Error(`Element ${selector} did not disappear within ${timeout} ms`));
+                    }
+                }, 100); // Check every 100 ms
+            });
+        }
+
+        async function automateUserGroupManagement() {
+            console.log("Inside automateUserGroupManagement function...");
+            // Open the navigation dropdown
+            let dropdown = await waitForElementAppear('#header_nav > div > div.row.top-menu > div > ul > li.profile > div > div.media-body.dropdown > a');
+            console.log("Dropdown element found:", dropdown);
+            dropdown.click();
+            console.log("Opened navigation dropdown.");
+            await delay(2500); // Wait for 2.5 seconds
+
+            // Go to User Groups page
+            let userGroupsLink = await waitForElementAppear('#header_nav > div > div.row.top-menu > div > ul > li.profile > div > div.media-body.dropdown > ul > li:nth-child(5) > a');
+            console.log("User groups link found:", userGroupsLink);
             userGroupsLink.click();
-            console.log("Successfully navigated to 'User Groups'.");
-
-            await delay(200); // Delay before starting company processing
-
-            await processCompanies();
-
-        } catch (error) {
-            console.error("Error navigating to 'User Groups':", error);
+            console.log("Navigated to User Groups page.");
+            await delay(2500); // Wait for 2.5 seconds
         }
-    }
 
-    async function processCompanies() {
-        try {
-            console.log("Attempting to find the company dropdown...");
+        async function processAllCompanies() {
+            let companies = document.querySelectorAll('#select2-company_data-container option');
+            let totalCompanies = companies.length;
 
-            let companySelect = await waitForElement('#company_data');
-            let companies = companySelect.querySelectorAll('option');
+            // Assuming progress starts at 0
+            let startFrom = 0;  // Set this to a higher value to resume from a specific company if needed
 
-            if (companies.length === 0) {
-                console.error("No companies found.");
-                return;
-            }
+            for (let i = startFrom; i < totalCompanies; i++) {
+                try {
+                    let companySelect = document.querySelector('#select2-company_data-container');
+                    companySelect.value = companies[i].value;
+                    companySelect.dispatchEvent(new Event('change'));
+                    console.log(`Processing company (${i + 1}/${totalCompanies}): ${companies[i].textContent.trim()}`);
 
-            console.log(`Found ${companies.length} companies.`);
+                    // Wait for 2.5 seconds between each selection
+                    await delay(2500);
 
-            for (let i = 0; i < companies.length; i++) {
-                if (stop) {
-                    console.log("Script stopped by user.");
-                    break;
-                }
+                    // Wait for the loading indicator to disappear
+                    await waitForElementRemoved('#loadingIndicator', 10000);
 
-                let option = companies[i];
-                let companyName = option.textContent.trim();
-                console.log(`Selecting the company: ${companyName}`);
+                    // Process user groups within the selected company
+                    await processUserGroupsInCompany(i);
 
-                await selectCompany(option);
-
-                await delay(2200);  // Delay before processing user groups
-
-                let allGroupsProcessed = await processUserGroupsInCompany();
-
-                if (!allGroupsProcessed) {
-                    console.warn("Error occurred while processing user groups, skipping to the next company.");
-                } else {
-                    console.log(`Successfully processed all user groups for company: ${companyName}`);
+                } catch (error) {
+                    console.error(`Error processing company ${i + 1}: ${error.message}`);
+                    // Optionally, retry logic or continue to the next company
+                    continue;  // Skip this company and move to the next
                 }
             }
 
-            console.log("Finished processing all companies.");
-        } catch (error) {
-            console.error("Error processing companies:", error);
-        }
     }
 
-    async function selectCompany(option) {
-        try {
-            let companySelect = document.querySelector('#company_data');
-            if (companySelect) {
-                companySelect.value = option.value;
-                companySelect.dispatchEvent(new Event('change'));
-
-                await waitForElement('#loadingIndicator', 10000, false);
-                console.log(`Selected company: ${option.textContent.trim()}`);
-
-                await delay(300); // Delay after company selection
-            } else {
-                console.error("Company select element not found.");
-            }
-        } catch (error) {
-            console.error("Error selecting company:", error);
-        }
+        function on_script_finished() {
+            console.log("All companies processed. Script completed successfully.");
+            // You can add additional code to handle post-processing here
     }
 
-    async function processUserGroupsInCompany() {
-        try {
-            console.log("Starting to process user groups in the company...");
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+    }
 
+        async function waitForElementRemoved(selector, timeout) {
+            return new Promise((resolve, reject) => {
+                let timer;
+                let observer = new MutationObserver((mutations, obs) => {
+                    if (!document.querySelector(selector)) {
+                        obs.disconnect();
+                        clearTimeout(timer);
+                        resolve();
+                    }
+                });
+
+                observer.observe(document.body, { childList: true, subtree: true });
+
+                // Timeout after specified time
+                timer = setTimeout(() => {
+                    observer.disconnect();
+                    reject(new Error(`Timeout waiting for ${selector} to be removed.`));
+                }, timeout);
+            });
+    }
+
+
+        async function processUserGroupsInCompany(companyIndex) {
+            console.log("Processing user groups for company index:", companyIndex);
             let groups = document.querySelectorAll('a[role="button"][data-toggle="collapse"]');
 
             if (groups.length === 0) {
-                console.error("No user groups found.");
-                return false;
+                console.log("No user groups found for company index:", companyIndex);
+                return; // No groups found, go to the next company
             }
 
-            console.log(`Found ${groups.length} user groups.`);
-
             for (let i = 0; i < groups.length; i++) {
-                if (stop) {
-                    console.log("Script stopped by user.");
-                    return false;
-                }
-
                 let group = groups[i];
-                group.click();
-                console.log(`Expanded group ${i}`);
-
-                await delay(300); // Short delay after expanding group
-
-                let groupNameElement = await waitForElement(`input[id^="groupName"][id$="${i}"]`);
-                let groupName = groupNameElement.value.trim().toLowerCase();
-                console.log(`Group ${i} name parsed as: '${groupName}'`);
-
-                if (groupName === 'everyone') {
-                    let memberCounter = document.querySelector(`#memberCounter${i}`);
-                    if (memberCounter && parseInt(memberCounter.value) > 0) {
-                        console.log(`Found 'Everyone' group with members (group ${i}).`);
-                        await handleFirstEveryoneGroupWithMembers();
-                    }
-                }
+                group.click(); // Click the group to expand
+                console.log(`Expanded group: ${group.textContent.trim()}`);
+                await delay(2500); // Wait for 2.5 seconds
 
                 let memberCounter = document.querySelector(`#memberCounter${i}`);
                 if (memberCounter && memberCounter.value === "0") {
-                    let deleteButtonSelector = `#collapse${i} .panel-body button.btn.btn-danger.pull-right`;
-                    let deleteButton = await waitForElement(deleteButtonSelector, 10000, true);
-
-                    await delay(300); // Delay before clicking the delete button
-                    
-                    if (deleteButton) {
-                        deleteButton.click();
-                        console.log(`Deleted group ${i}`);
-                        await waitForElement(`#group_${i}`, 5000, false);
-                    } else {
-                        console.warn(`Delete button for group ${i} not found or not visible.`);
-                    }
+                    // Group has no members, delete it
+                    await deleteGroup(group);
                 } else {
-                    console.log(`Group ${i} has members and was not deleted.`);
-                }
-            }
-
-            return true;
-        } catch (error) {
-            console.error("Error processing user groups in company:", error);
-            return false;
-        }
-    }
-
-    async function handleFirstEveryoneGroupWithMembers() {
-        console.log("Handling the first 'Everyone' group with members...");
-        let groups = document.querySelectorAll('a[role="button"][data-toggle="collapse"]');
-        let foundGroup = false;
-
-        for (let i = 0; i < groups.length; i++) {
-            if (stop) break;
-
-            let groupNameElement = document.querySelector(`input[id^="groupName"][id$="${i}"]`);
-            if (groupNameElement && groupNameElement.value.trim().toLowerCase() === 'everyone') {
-                let memberCounter = document.querySelector(`#memberCounter${i}`);
-                if (memberCounter && parseInt(memberCounter.value) > 0) {
-                    console.log(`Found 'Everyone' group with members (group ${i}), interacting with 'Add Member' button.`);
-
-                    let addButton = document.querySelector('a.add_button[onclick="add_group_user(1);"]');
-                    if (addButton) {
-                        addButton.click();
-                        
-                        // Wait for the modal to appear
-                        await waitForElement('#availableUsersForm', 5000);
-
-                        // Check if there are no checkboxes
-                        let checkboxes = document.querySelectorAll('input[type="checkbox"][name="userUuid[]"]');
-                        if (checkboxes.length === 0) {
-                            console.log("No available users to add, closing the modal by clicking on the screen.");
-
-                            // Simulate a click in the middle of the screen to close the modal
-                            let middleOfScreen = new MouseEvent('click', {
-                                view: window,
-
-                                bubbles: true,
-                                cancelable: true,
-                                clientX: window.innerWidth / 2,
-                                clientY: window.innerHeight / 2
-                            });
-                            document.dispatchEvent(middleOfScreen);
-                            
-                            await waitForElement('.modal.show', 5000, false); // Wait for modal to disappear
-                            console.log("Modal successfully closed by clicking the screen.");
-                        } else {
-                            // If checkboxes are present, proceed to select them and add members
-                            checkboxes.forEach(checkbox => checkbox.click());
-
-                            let submitButton = document.querySelector('button.btn.btn-primary[type="submit"]');
-                            if (submitButton) {
-                                submitButton.click();
-                                console.log("All members added and confirmed.");
-                                await waitForElement('.modal.show', 5000, false); // Wait for modal to disappear
-                            }
-                        }
-                        foundGroup = true;
-                        break;
-                    } else {
-                        console.error("'Add Member' button not found.");
+                    // Check if it's an 'Everyone' group with members
+                    let groupNameElement = document.querySelector("#groupNameLabel" + (i + 1));
+                    if (groupNameElement && groupNameElement.value.trim().toLowerCase() === 'everyone') {
+                        await handleEveryoneGroupWithMembers(group);
                     }
                 }
+                // Wait for the group to be fully processed before moving to the next one
+                await waitForElementRemoved(`#collapse${i}`);
             }
+
+            // After processing, delete all other 'Everyone' groups regardless of members
+            await deleteAllOtherEveryoneGroups();
         }
 
-        if (!foundGroup) {
-            console.warn("'Everyone' group with members not found.");
+        async function deleteGroup(group) {
+            console.log(`Deleting group: ${group.textContent.trim()}`);
+            let deleteButton = await waitForElementAppear(`#collapse${i} > div > div > div.col-lg-12.pull-right > button`);
+            deleteButton.click();
+            console.log("Clicked delete button.");
+            await delay(2500); // Wait for 2.5 seconds
+
+            let confirmButton = await waitForElementAppear('#deleteGroup');
+            confirmButton.click();
+            console.log("Clicked confirm button for deletion.");
+            await delay(2500); // Wait for 2.5 seconds
         }
-        return foundGroup;
-    }
 
-    async function deleteEveryOtherEveryoneGroup() {
-        console.log("Starting to delete every other 'Everyone' group...");
-        let groups = document.querySelectorAll('a[role="button"][data-toggle="collapse"]');
-        let deleteNext = false;
+        async function handleEveryoneGroupWithMembers(group) {
+            console.log(`Handling 'Everyone' group with members: ${group.textContent.trim()}`);
+            let addButton = document.querySelector("#directionext_result > a > span");
+            addButton.click();
+            console.log("Clicked add members button.");
+            await delay(2500); // Wait for 2.5 seconds
 
-        for (let i = 0; i < groups.length; i++) {
-            if (stop) break;
+            let checkboxes = document.querySelectorAll('#availableUsersForm > div.modal-body > ul > li:nth-child(4) > label > input[type=checkbox]');
+            checkboxes.forEach(checkbox => checkbox.click());
+            console.log("Clicked all checkboxes.");
 
-            let groupNameElement = document.querySelector(`input[id^="groupName"][id$="${i}"]`);
-            if (groupNameElement && groupNameElement.value.trim().toLowerCase() === 'everyone') {
-                if (deleteNext) {
-                    console.log(`Deleting 'Everyone' group (group ${i})`);
+            let submitButton = document.querySelector('#availableUsersForm > div.modal-footer > button.btn.btn-primary');
+            submitButton.click();
+            console.log("Clicked add members confirmation button.");
+            await delay(2500); // Wait for 2.5 seconds
+        }
 
-                    let deleteButton = document.querySelector(`#deleteButton${i}`);
-                    if (deleteButton) {
-                        deleteButton.click();
-                        await delay(1000); // Short wait before moving on
-                    } else {
-                        console.error(`Delete button for group ${i} not found.`);
-                    }
+        async function deleteAllOtherEveryoneGroups() {
+            console.log("Deleting all other 'Everyone' groups regardless of members.");
+            let allGroups = document.querySelectorAll('a[role="button"][data-toggle="collapse"]');
+            for (let i = 0; i < allGroups.length; i++) {
+                let groupNameElement = document.querySelector("#groupNameLabel" + (i + 1));
+                if (groupNameElement && groupNameElement.value.trim().toLowerCase() === 'everyone') {
+                    await deleteGroup(allGroups[i]);
                 }
-                deleteNext = !deleteNext;
             }
         }
 
-        console.log("Finished deleting every other 'Everyone' group.");
-    }
+        (async function() {
+            try {
+                console.log("Starting automation process...");
+                // Start the automation process
+                await automateUserGroupManagement();
+                console.log("Automation process completed successfully.");
+            } catch (error) {
+                console.error("An error occurred during the automation process:", error);
+            }
+        })();
 
-    await navigateToUserGroups();
-
-})();
-"""
+        console.log("JavaScript injection completed");
+        """
 
         # Inject the JavaScript into the webpage
         self.webview.page().runJavaScript(script, self.on_script_finished)
