@@ -112,7 +112,6 @@ The GUI, developed using **PyQt5**, allows for intuitive and visual interaction 
 ## Installation
 
 1. Download the latest release from the [Releases page](https://github.com/bwright-dev/AUGD/releases).
-2. Follow the provided setup instructions.
 
 ---
 
