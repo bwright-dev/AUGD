@@ -1,26 +1,128 @@
-let hasProcessedEveryoneGroupWithMembers = false;
-let savestate = null; // Load the savestate from Python if available
+import sys
+import os
+import logging
+from logging.handlers import RotatingFileHandler
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QVBoxLayout, QPushButton,
+    QLabel, QWidget, QHBoxLayout, QStatusBar
+)
+from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
+from PyQt5.QtCore import QUrl, pyqtSlot
+from datetime import datetime
+import json
 
-async function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
+# Set up logging folder and file
+log_folder = os.path.join(os.path.expanduser("~"), "Documents", "AUGD Logs")
+os.makedirs(log_folder, exist_ok=True)
+log_file_path = os.path.join(log_folder, "automation_log.txt")
 
-async function waitForElementAppear(selector, timeout = 20000) {
-    return new Promise((resolve, reject) => {
-        const startTime = Date.now();
-        const checkExist = setInterval(() => {
-            const element = document.querySelector(selector);
-            if (element) {
-                clearInterval(checkExist);
-                resolve(element);
-            } else if (Date.now() - startTime >= timeout) {
-                clearInterval(checkExist);
-                console.error(`Element ${selector} did not appear within ${timeout} ms`);
-                reject(new Error(`Element ${selector} did not appear within ${timeout} ms`));
-            }
-        }, 100); // Check every 100 ms
-    });
-}
+# Set up log rotation (5MB per file, 2 backups)
+log_handler = RotatingFileHandler(log_file_path, maxBytes=5 * 1024 * 1024, backupCount=2)
+logging.basicConfig(handlers=[log_handler], level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.info("Application started with detailed logging.")
+
+# Get the current timestamp
+def get_timestamp():
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+# Custom class to capture JavaScript console messages
+class WebEnginePage(QWebEnginePage):
+    def javaScriptConsoleMessage(self, level, message, line, source):
+        log_message = f"JavaScript Console - Level: {level}, Message: {message}, Line: {line}, Source: {source}"
+        logging.info(log_message)
+
+        if level == 3:  # Error level
+            logging.error(f"JS Error [{source}:{line}]: {message}")
+        elif level == 2:  # Warning level
+            logging.warning(f"JS Warning [{source}:{line}]: {message}")
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("AUGD - Automated User Group Deletion")
+        self.setGeometry(100, 100, 1200, 800)
+
+        # Apply dark mode styling
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        layout = QVBoxLayout(self.central_widget)
+
+        # WebEngineView to display webpage
+        self.webview = QWebEngineView()
+        self.webview.setFixedSize(1200, 800)
+
+        # Custom page to capture console messages
+        self.page = WebEnginePage()
+        self.webview.setPage(self.page)
+
+        # Load target URL
+        self.webview.setUrl(QUrl("https://cp.hivepbx.com"))
+        self.webview.loadFinished.connect(self.on_page_load)
+        layout.addWidget(self.webview)
+
+        # Add horizontal layout for buttons
+        hbox = QHBoxLayout()
+
+        # Run Script button
+        self.run_button = QPushButton("Run Script", self)
+        self.run_button.clicked.connect(self.run_script)
+        hbox.addWidget(self.run_button)
+
+        # Stop Script button
+        self.stop_button = QPushButton("Stop Script", self)
+        self.stop_button.clicked.connect(self.stop_script)
+        hbox.addWidget(self.stop_button)
+
+        # Restart Button to restart from last saved state
+        self.restart_button = QPushButton("Restart Script", self)
+        self.restart_button.clicked.connect(self.restart_script)
+        hbox.addWidget(self.restart_button)
+
+        # Status label
+        self.status_label = QLabel(f"Status: Waiting for user action... [{get_timestamp()}]", self)
+        hbox.addWidget(self.status_label)
+
+        layout.addLayout(hbox)
+
+        # Status bar
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+
+        # Initialize variables for state tracking
+        self.is_running = False
+        self.company_index = 0
+        self.load_state()
+
+    def inject_javascript(self, state=None):
+        """Inject JavaScript into the webpage with savestate."""
+        logging.info("Injecting JavaScript...")
+
+        # Convert the state to a JavaScript object (f-string only for this part)
+        state_js = json.dumps(state) if state else 'null'
+        savestate_script = f"let savestate = {state_js};"
+        script = """
+        let hasProcessedEveryoneGroupWithMembers = false;
+
+        async function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function waitForElementAppear(selector, timeout = 20000) {{
+            return new Promise((resolve, reject) => {{
+                const startTime = Date.now();
+                const checkExist = setInterval(() => {{
+                    const element = document.querySelector(selector);
+                    if (element) {{
+                        clearInterval(checkExist);
+                        resolve(element);
+                    }} else if (Date.now() - startTime >= timeout) {{
+                        clearInterval(checkExist);
+                        console.error(`Element {{selector}} did not appear within {{timeout}} ms`);
+                        reject(new Error(`Element {{selector}} did not appear within {{timeout}} ms`));
+                    }}
+                }}, 100); 
+            }});
+        }}
 
 async function waitForElementRemoved(selector, timeout = 10000) {
     return new Promise((resolve, reject) => {
@@ -303,3 +405,74 @@ async function handleEveryoneGroupWithMembers(groupIndex) {
         console.error("An error occurred during the automation process:", error);
     }
 })();
+"""
+
+    self.webview.page().runJavaScript(savestate_script)
+self.webview.page().runJavaScript(script)
+
+def run_script(self):
+        """Start the script."""
+        logging.info("Script started.")
+        self.is_running = True
+        self.inject_javascript()
+
+def restart_script(self):
+        """Restart script from last saved state."""
+        logging.info("Script restarted from saved state.")
+        self.is_running = True
+        state = self.load_state()
+        self.inject_javascript(state)
+
+def save_state(self, company_index):
+        """Save current progress."""
+        state = {
+            'company_index': company_index,
+            'is_running': self.is_running,
+        }
+        with open('savestate.txt', 'w') as f:
+            json.dump(state, f)
+        logging.info(f"State saved at company index {company_index}.")
+
+def load_state(self):
+        """Load the last saved state."""
+        if os.path.exists('savestate.txt'):
+            with open('savestate.txt', 'r') as f:
+                state = json.load(f)
+            self.company_index = state.get('company_index', 0)
+            logging.info(f"Resuming from company index {self.company_index}.")
+            return state
+        else:
+            logging.info("No saved state found. Starting fresh.")
+            return None
+
+def stop_script(self):
+        """Stop the running script."""
+        logging.info("Script stopped by user.")
+        self.is_running = False
+        self.webview.page().runJavaScript("window.stop = true;")
+
+@pyqtSlot()
+def on_script_finished(self):
+        """Handle script completion."""
+        if self.is_running:
+            logging.info("Script completed successfully.")
+            timestamp = get_timestamp()
+            os.rename('savestate.txt', f'savestate_completed_{timestamp}.txt')
+            self.status_label.setText(f"Script completed. State saved as savestate_completed_{timestamp}.txt")
+        else:
+            logging.info("Script stopped early.")
+
+def on_page_load(self):
+        """Handle page load completion."""
+        logging.info("Page loaded successfully.")
+        self.status_bar.showMessage(f"Page loaded at {get_timestamp()}")
+
+# Main entry point
+def main():
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_())
+
+if __name__ == "__main__":
+    main()

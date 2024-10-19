@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['AUGD_v1_1.py'],
+    ['augd_v1_1.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='AUGD_v1_1',
+    name='augd_v1_1',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
