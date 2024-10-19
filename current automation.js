@@ -1,5 +1,4 @@
 let hasProcessedEveryoneGroupWithMembers = false;
-let savestate = null; // Load the savestate from Python if available
 
 async function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -18,7 +17,7 @@ async function waitForElementAppear(selector, timeout = 20000) {
                 console.error(`Element ${selector} did not appear within ${timeout} ms`);
                 reject(new Error(`Element ${selector} did not appear within ${timeout} ms`));
             }
-        }, 100); // Check every 100 ms
+        }, 100);
     });
 }
 
@@ -34,10 +33,11 @@ async function waitForElementRemoved(selector, timeout = 10000) {
                 clearInterval(checkExist);
                 reject(new Error(`Element ${selector} did not disappear within ${timeout} ms`));
             }
-        }, 100); // Check every 100 ms
+        }, 100);
     });
 }
 
+// Function to reopen a group by index
 async function reopenGroup(groupIndex) {
     let clickableElement = document.querySelector(`#groupID${groupIndex} > div.panel-heading > h4 > a`);
     if (clickableElement) {
@@ -52,11 +52,7 @@ async function reopenGroup(groupIndex) {
     return true;
 }
 
-async function saveStateToPython(companyIndex, groupIndex) {
-    // Call Python to save state to disk
-    window.pyqtBoundObject.saveState(companyIndex, groupIndex);
-}
-
+// Main automation function
 async function automateUserGroupManagement() {
     console.log(`Inside automateUserGroupManagement function...`);
     let dropdown = await waitForElementAppear('#header_nav > div > div.row.top-menu > div > ul > li.profile > div > div.media-body.dropdown > a');
@@ -76,6 +72,7 @@ async function automateUserGroupManagement() {
     await processAllCompanies();
 }
 
+// Function to process all companies
 async function processAllCompanies() {
     console.log(`Inside processAllCompanies function...`);
     let companySelect = document.querySelector('#company_data');
@@ -83,16 +80,12 @@ async function processAllCompanies() {
         console.error("Company select element not found!");
         return;
     }
-    await waitForElementRemoved('#loadingIndicator', 10000);
-    await delay(75);
+
     let companies = document.querySelectorAll('#company_data option');
     console.log(`Found ${companies.length} companies in the hidden dropdown.`);
-    await waitForElementRemoved('#loadingIndicator', 10000);
-    await delay(75);
 
-    let currentCompanyIndex = savestate ? savestate.companyIndex : 0; // Start from saved state or 0
-
-    for (let i = currentCompanyIndex; i < companies.length; i++) {
+    // Process each company
+    for (let i = 0; i < companies.length; i++) {
         const option = companies[i];
         const companyName = option.textContent.trim();
         const companyValue = option.value;
@@ -101,7 +94,6 @@ async function processAllCompanies() {
 
         // Reset the flag when starting a new company
         hasProcessedEveryoneGroupWithMembers = false;
-        console.log(`Flag set: hasProcessedEveryoneGroupWithMembers = false for company ${companyName}`);
 
         companySelect.value = companyValue;
         await waitForElementRemoved('#loadingIndicator', 10000);
@@ -111,21 +103,11 @@ async function processAllCompanies() {
         await waitForElementRemoved('#loadingIndicator', 10000);
         await delay(75);
         await processUserGroupsInCompany(i, companyName);
-
-        // Save state every 5 companies
-        if (i % 5 === 0) {
-            await saveStateToPython(i, 0);  // Save company and group index
-        }
-
-        // Reload after 30 companies
-        if (i % 30 === 0 && i !== 0) {
-            console.log('Reloading page to prevent performance issues...');
-            location.reload();  // Reload the page to reset JS execution
-            return;
-        }
     }
+    console.log("Company processing loop finished.");
 }
 
+// Function to process user groups in a company
 async function processUserGroupsInCompany(companyIndex, companyName) {
     console.log(`Processing user groups for company index: ${companyIndex}`);
     await waitForElementRemoved('#loadingIndicator', 10000);
@@ -137,9 +119,7 @@ async function processUserGroupsInCompany(companyIndex, companyName) {
         return;
     }
 
-    let currentGroupIndex = savestate ? savestate.groupIndex : 0; // Start from saved group state
-
-    for (let i = currentGroupIndex; i < groups.length; i++) {
+    for (let i = 0; i < groups.length; i++) {
         let group = groups[i];
         let groupReopened = await reopenGroup(i);
         if (!groupReopened) {
@@ -157,22 +137,32 @@ async function processUserGroupsInCompany(companyIndex, companyName) {
                     console.log(`Processing 'everyone' group ${i} that already has members.`);
                     await handleEveryoneGroupWithMembers(i);
                     hasProcessedEveryoneGroupWithMembers = true;
-                    console.log(`Flag set: hasProcessedEveryoneGroupWithMembers = true for group ID ${i}, company: ${companyName}`);
                 } else {
-                    console.log(`Skipping modal for 'everyone' group ${i}, already processed another 'everyone' group.`);
+                    console.log(`Deleting 'everyone' group ${i}, as another group has already been processed.`);
+                    await deleteGroup(i);
                 }
             } else {
                 console.log(`Processing 'everyone' group ${i} with no members.`);
                 await deleteGroup(i);
-            }
+            }       
+         } else {
+        console.log(`Processing non-'everyone' group ${i}: ${groupName}`);
+        
+        // Check the member count for non-'everyone' groups
+        if (parseInt(memberCounter.value) === 0) {
+            console.log(`Deleting non-'everyone' group ${i}: ${groupName} as it has no members.`);
+            await deleteGroup(i);
         } else {
-            console.log(`Processing non-'everyone' group ${i}: ${groupName}`);
-            await waitForElementRemoved('#loadingIndicator', 10000);
-            await delay(75);
+            console.log(`Skipping non-'everyone' group ${i}: ${groupName} as it has members.`);
         }
+        
+        await waitForElementRemoved('#loadingIndicator', 10000);
+        await delay(75);
+    }
     }
 }
 
+// Function to delete a group
 async function deleteGroup(groupIndex) {
     console.log(`Deleting group ID: ${groupIndex}`);
     let groupReopened = await reopenGroup(groupIndex);
@@ -199,6 +189,7 @@ async function deleteGroup(groupIndex) {
     }
 }
 
+// Function to handle 'everyone' group with members
 async function handleEveryoneGroupWithMembers(groupIndex) {
     await delay(150);
 
@@ -216,7 +207,7 @@ async function handleEveryoneGroupWithMembers(groupIndex) {
                     console.error(`Modal ${selector} did not become visible within ${timeout} ms`);
                     reject(new Error(`Modal ${selector} did not become visible within ${timeout} ms`));
                 }
-            }, 100); // Check every 100 ms
+            }, 100);
         });
     }
 
@@ -240,7 +231,7 @@ async function handleEveryoneGroupWithMembers(groupIndex) {
             console.log(`Modal is visible for group ID ${groupIndex}.`);
         } catch (error) {
             console.error(`Stopping script because modal failed to open for group ID ${groupIndex}.`);
-            throw error;  // Stop script execution for debugging purposes
+            throw error;
         }
 
         // Small wait for checkboxes to appear
@@ -290,10 +281,9 @@ async function handleEveryoneGroupWithMembers(groupIndex) {
     } else {
         console.error(`Add button not found for group ID ${groupIndex}.`);
     }
-    await waitForElementRemoved('#loadingIndicator', 10000);
-    await delay(75);
 }
 
+// Main entry point
 (async function () {
     try {
         console.log("Starting automation process...");
@@ -302,4 +292,4 @@ async function handleEveryoneGroupWithMembers(groupIndex) {
     } catch (error) {
         console.error("An error occurred during the automation process:", error);
     }
-})();
+});
